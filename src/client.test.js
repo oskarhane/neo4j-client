@@ -4,7 +4,7 @@ const {
   TestLink,
   TestSession,
   sleep
-} = require("./test-utils");
+} = require("../test-utils");
 
 describe("neo4j-client", () => {
   describe("connections", () => {

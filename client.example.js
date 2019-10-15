@@ -1,6 +1,6 @@
 const { v1: neo4j } = require("neo4j-driver");
-const Neo4jClient = require("./client");
-const BoltLink = require("./bolt/bolt-link");
+const Neo4jClient = require("./src/client");
+const BoltLink = require("./src/bolt/bolt-link");
 const { sleep } = require("./test-utils");
 
 const u = "neo4j";
@@ -10,12 +10,15 @@ const url = "bolt://localhost:7687";
 const auth = neo4j.auth.basic(u, p);
 const opts = { encryption: false };
 
-let retries = 10;
+let retries = 2;
 
 const onStateChange = (state, errorMsg, client) => {
   console.log("state, errorMsg: ", state, errorMsg);
-  if (client.stateMatches("failed") && --retries) {
-    client.connect();
+  if (client.stateMatches("failed")) {
+    retries--;
+    if (retries > 0) {
+      client.connect();
+    }
   }
 };
 
