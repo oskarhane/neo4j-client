@@ -2,7 +2,8 @@ const Neo4jClient = require("./client");
 const {
   observeStateChangeUntil,
   TestLink,
-  TestSession
+  TestSession,
+  sleep
 } = require("./test-utils");
 
 describe("neo4j-client", () => {
@@ -154,6 +155,77 @@ describe("neo4j-client", () => {
       expect(client.stateMatches("connected")).toBe(true);
       expect(classifyErrorMock).toHaveBeenCalledTimes(1);
       expect(classifyErrorMock).toHaveBeenCalledWith(error);
+    });
+  });
+  describe("query tracking", () => {
+    test("cancelling a finished query doesnt throw, but doesnt call done fn either", async () => {
+      // Given
+      const query = { statement: "RETURN 1" };
+      const cancelDone = jest.fn();
+      let session;
+      const sessionMock = jest.fn(() => {
+        session = new TestSession();
+        return session;
+      });
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
+
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
+      // Wait for client to connect
+      await waitUntilStateMatches();
+      const [id] = await client.read(query);
+
+      // Then
+      expect(session.run).toHaveBeenCalledTimes(1);
+      expect(session.close).toHaveBeenCalledTimes(1);
+
+      // When
+      // Time to cancel
+      client.cancel(id, cancelDone);
+
+      // Then
+      expect(session.run).toHaveBeenCalledTimes(1);
+      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(cancelDone).toHaveBeenCalledTimes(0); // <- not called
+    });
+    test("cancelling query", async () => {
+      // Given
+      const query = { statement: "RETURN 1" };
+      const cancelDone = jest.fn();
+      let session;
+      const sessionMock = jest.fn(() => {
+        session = new TestSession();
+        session.run = jest.fn(() => new Promise(() => {})); // never ending promise
+        return session;
+      });
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
+
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
+      // Wait for client to connect
+      await waitUntilStateMatches();
+      const [id] = await client.read(query);
+
+      // Then
+      expect(session.run).toHaveBeenCalledTimes(1);
+      expect(session.close).toHaveBeenCalledTimes(0);
+
+      // When
+      // Time to cancel
+      client.cancel(id, cancelDone);
+
+      // Then
+      expect(session.run).toHaveBeenCalledTimes(1);
+      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(cancelDone).toHaveBeenCalledTimes(1); // <- called
     });
   });
 });

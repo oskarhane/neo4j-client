@@ -11,7 +11,7 @@ module.exports.TestLink = function() {
 
 module.exports.TestSession = function() {
   this.run = jest.fn(() => Promise.resolve());
-  this.close = jest.fn();
+  this.close = jest.fn(cb => cb && cb());
 };
 
 module.exports.sleep = secs => {
