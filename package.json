@@ -7,8 +7,8 @@
     "test": "jest",
     "dev": "nodemon client.example.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Oskar Hane",
+  "license": "Apache-2.0",
   "dependencies": {
     "neo4j-driver": "^1.7.6",
     "uuid": "^3.3.3",
