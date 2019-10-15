@@ -37,7 +37,6 @@ class Neo4jClient {
               target: "failed",
               actions: assign({
                 errorMessage: (context, event) => {
-                  console.log("connection error");
                   return event.data.code;
                 }
               })
@@ -51,7 +50,6 @@ class Neo4jClient {
               target: "failed",
               actions: assign({
                 errorMessage: (context, event) => {
-                  console.log("unauthorized");
                   return "Unauthorized";
                 }
               })
@@ -93,7 +91,6 @@ class Neo4jClient {
     });
     this.service = interpret(machine).onTransition(state => {
       this.onStateChange(state.value, state.context.errorMessage, this);
-      console.log(state.value);
     });
     this.service.start();
   }
@@ -114,9 +111,9 @@ class Neo4jClient {
     try {
       await this.ensureConnected(2);
     } catch (e) {
-      return Promise.reject("Could not establish session. Are you connected?");
+      throw new Error("Could not establish session. Are you connected?");
     }
-    return Promise.resolve(this.link.session(...args));
+    return this.link.session(...args);
   }
 
   async read({ statement = "", parameters = {}, existingTxId, metadata }) {

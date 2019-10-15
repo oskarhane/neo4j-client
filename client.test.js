@@ -1,48 +1,159 @@
-const { v1: neo4j } = require("neo4j-driver");
 const Neo4jClient = require("./client");
-const BoltLink = require("./bolt/bolt-link");
+const {
+  observeStateChangeUntil,
+  TestLink,
+  TestSession
+} = require("./test-utils");
 
-const u = "neo4j";
-const p = "newpassword";
-const url = "bolt://localhost:7687";
+describe("neo4j-client", () => {
+  describe("connections", () => {
+    test("Connecting happy path", async () => {
+      // Given
+      const sessionMock = jest.fn();
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
 
-const auth = neo4j.auth.basic(u, p);
-const opts = { encryption: false };
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
 
-let retries = 10;
+      // Wait for client to connect
+      await waitUntilStateMatches();
 
-const onStateChange = (state, errorMsg, client) => {
-  console.log("state, errorMsg: ", state, errorMsg);
-  if (client.stateMatches("failed") && --retries) {
-    client.connect();
-  }
-};
+      // Then
+      expect(client.stateMatches("connected")).toBe(true);
+      expect(link.connect).toHaveBeenCalledTimes(1);
+      expect(link.disconnect).toHaveBeenCalledTimes(0);
+      expect(sessionMock).toHaveBeenCalledTimes(0);
+    });
 
-const boltLink = new BoltLink(url, auth, opts);
-const client = new Neo4jClient({ link: boltLink, onStateChange });
+    test("Connecting fail ends up in failed state", async () => {
+      // Given
+      const connectMock = jest.fn(() =>
+        Promise.reject({ code: "Any error code" })
+      );
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "failed"
+      );
+      const link = new TestLink();
+      link.connect = connectMock;
 
-const queries = Array(2).fill("RETURN rand()");
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
 
-async function main(queries) {
-  for (let query of queries) {
-    await sleep(2);
-    await run({ statement: query });
-  }
-  client.disconnect();
-}
+      // Wait for client to connect
+      await waitUntilStateMatches();
 
-async function run(q) {
-  try {
-    const [id, p] = await client.read(q);
-    const res = await p;
-    console.log("res: ", res.records[0]._fields[0]);
-  } catch (e) {
-    console.log("e in test: ", e);
-  }
-}
+      // Then
+      expect(client.stateMatches("failed")).toBe(true);
+      expect(connectMock).toHaveBeenCalledTimes(1);
+    });
+  });
 
-function sleep(secs) {
-  return new Promise(resolve => setTimeout(() => resolve(), secs * 1000));
-}
+  describe("sessions", () => {
+    test("session happy path", async () => {
+      // Given
+      const query = {
+        statement: "RETURN $x",
+        parameters: { x: 1 },
+        metadata: { client: "test" }
+      };
+      let session;
+      const sessionMock = jest.fn(() => {
+        session = new TestSession();
+        return session;
+      });
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
 
-main(queries);
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
+      // Wait for client to connect
+      await waitUntilStateMatches();
+      await client.read(query);
+
+      // Then
+      expect(client.stateMatches("connected")).toBe(true);
+      expect(link.connect).toHaveBeenCalledTimes(1);
+      expect(sessionMock).toHaveBeenCalledTimes(1);
+      expect(sessionMock).toHaveBeenCalledWith(link.sessionTypes.READ);
+      expect(session.run).toHaveBeenCalledTimes(1);
+      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(session.run).toHaveBeenCalledWith(
+        query.statement,
+        query.parameters,
+        { metadata: query.metadata }
+      );
+    });
+
+    test("session unauthorized path = failed state", async () => {
+      // Given
+      const error = { code: "UNAUTHORIZED" };
+      const classifyErrorMock = jest.fn(e => e.code);
+      let session;
+      const sessionMock = jest.fn(() => {
+        session = new TestSession();
+        session.run = jest.fn(() => Promise.reject(error));
+        return session;
+      });
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
+      link.classifyError = classifyErrorMock;
+
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
+      // Wait for client to connect
+      await waitUntilStateMatches();
+      try {
+        const [_, res] = await client.read({});
+        await res;
+      } catch (e) {}
+
+      // Then
+      expect(client.stateMatches("failed")).toBe(true);
+      expect(classifyErrorMock).toHaveBeenCalledTimes(1);
+      expect(classifyErrorMock).toHaveBeenCalledWith(error);
+    });
+
+    test("session query error path = still connected", async () => {
+      // Given
+      const error = { code: "Test.Error" }; // Query error
+      const classifyErrorMock = jest.fn(e => e.code);
+      let session;
+      const sessionMock = jest.fn(() => {
+        session = new TestSession();
+        session.run = jest.fn(() => Promise.reject(error));
+        return session;
+      });
+      const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
+        "connected"
+      );
+      const link = new TestLink();
+      link.session = sessionMock;
+      link.classifyError = classifyErrorMock;
+
+      // When
+      const client = new Neo4jClient({ link, onStateChange });
+      // Wait for client to connect
+      await waitUntilStateMatches();
+      try {
+        const [_, res] = await client.read({});
+        await res;
+      } catch (e) {}
+
+      // Then
+      expect(client.stateMatches("failed")).toBe(false);
+      expect(client.stateMatches("connected")).toBe(true);
+      expect(classifyErrorMock).toHaveBeenCalledTimes(1);
+      expect(classifyErrorMock).toHaveBeenCalledWith(error);
+    });
+  });
+});
