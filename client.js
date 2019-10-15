@@ -12,10 +12,10 @@ class Neo4jClient {
   }
   init() {
     const machineSpec = {
-      id: "connection",
+      id: "neo4j-client",
       initial: "disconnected",
       context: {
-        errorMessage: undefined
+        errorMessage: null
       },
       states: {
         disconnected: {

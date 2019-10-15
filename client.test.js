@@ -1,6 +1,6 @@
 const { v1: neo4j } = require("neo4j-driver");
 const Neo4jClient = require("./client");
-const BoltLink = require("./bolt-link");
+const BoltLink = require("./bolt/bolt-link");
 
 const u = "neo4j";
 const p = "newpassword";
@@ -28,6 +28,7 @@ async function main(queries) {
     await sleep(2);
     await run({ statement: query });
   }
+  client.disconnect();
 }
 
 async function run(q) {

@@ -1,4 +1,5 @@
 const { v1: neo4j } = require("neo4j-driver");
+const BoltSession = require("./bolt-session");
 
 class BoltLink {
   constructor(url, auth, opts) {
@@ -53,7 +54,8 @@ class BoltLink {
     return Promise.resolve();
   }
   session(...args) {
-    return this.driver.session(...args);
+    const session = this.driver.session(...args);
+    return new BoltSession(session);
   }
   classifyError(e) {
     if (e.code === "Neo.ClientError.Security.Unauthorized") {
