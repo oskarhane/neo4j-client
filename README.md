@@ -1,6 +1,6 @@
 ## Neo4j Client
 
-A Neo4j Client somewhat inspired by [https://www.apollographql.com/docs/react/api/apollo-client/](ApolloClient).
+A Neo4j Client somewhat inspired by [ApolloClient](https://www.apollographql.com/docs/react/api/apollo-client/).
 
 ### Explicit client states
 
