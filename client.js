@@ -1,17 +1,13 @@
-const { v1: neo4j } = require("neo4j-driver");
 const { Machine, assign, interpret } = require("xstate");
 const { v4 } = require("uuid");
 
-class BoltClient {
-  constructor(url, auth, opts = {}) {
-    this.url = url;
-    this.auth = auth;
-    this.opts = opts;
+class Neo4jClient {
+  constructor(config = {}) {
+    this.link = config.link;
+    this.onStateChange = config.onStateChange || function() {};
     this.service = null;
-    this.drivers = { direct: undefined, routed: undefined };
     this.init();
-    this.service.send("CONNECT");
-    this.statementQueue = [];
+    this.connect();
     this.trackedSessions = {};
   }
   init() {
@@ -28,10 +24,11 @@ class BoltClient {
           }
         },
         connecting: {
+          entry: "resetErrorMessage",
           invoke: {
             id: "connect",
             src: () => {
-              return this.connect();
+              return this.link.connect();
             },
             onDone: {
               target: "connected"
@@ -40,8 +37,8 @@ class BoltClient {
               target: "failed",
               actions: assign({
                 errorMessage: (context, event) => {
-                  console.log("event: ", event);
-                  return event.data.message;
+                  console.log("connection error");
+                  return event.data.code;
                 }
               })
             }
@@ -50,17 +47,35 @@ class BoltClient {
         connected: {
           on: {
             DISCONNECT: "disconnecting",
-            UNAUTHORIZED: "disconnecting"
+            UNAUTHORIZED: {
+              target: "failed",
+              actions: assign({
+                errorMessage: (context, event) => {
+                  console.log("unauthorized");
+                  return "Unauthorized";
+                }
+              })
+            },
+            UNAVAILABLE: {
+              target: "failed",
+              actions: assign({
+                errorMessage: (context, event) => {
+                  console.log("ServiceUnavailable");
+                  return "ServiceUnavailable";
+                }
+              })
+            }
           }
         },
         disconnecting: {
           invoke: {
             id: "disconnect",
             src: (context, event) => {
-              return this.disconnect();
+              return this.link.disconnect();
             },
             onDone: {
-              target: "disconnected"
+              target: "disconnected",
+              actions: "resetErrorMessage"
             }
           }
         },
@@ -71,40 +86,41 @@ class BoltClient {
         }
       }
     };
-    const machine = Machine(machineSpec);
+    const machine = Machine(machineSpec, {
+      actions: {
+        resetErrorMessage: assign({ errorMessage: null })
+      }
+    });
     this.service = interpret(machine).onTransition(state => {
+      this.onStateChange(state.value, state.context.errorMessage, this);
       console.log(state.value);
     });
     this.service.start();
   }
-  connect() {
-    try {
-      const driver = neo4j.driver(this.url, this.auth, this.opts);
-      this.driver = driver;
-      return Promise.resolve();
-    } catch (e) {
-      return Promise.reject(e);
-    }
+
+  stateMatches(what) {
+    return this.service.state.matches(what);
   }
+
+  connect() {
+    return this.service.send("CONNECT");
+  }
+
   disconnect() {
-    if (this.driver) {
-      this.driver.close();
-      this.driver = undefined;
-    }
-    return Promise.resolve();
+    return this.service.send("DISCONNECT");
   }
 
   async session(...args) {
     try {
-      await this.ensureConnected(3);
+      await this.ensureConnected(2);
     } catch (e) {
       return Promise.reject("Could not establish session. Are you connected?");
     }
-    return Promise.resolve(this.driver.session(...args));
+    return Promise.resolve(this.link.session(...args));
   }
 
   async read({ statement = "", parameters = {}, existingTxId, metadata }) {
-    const session = await this.session(neo4j.session.READ);
+    const session = await this.session(this.link.sessionTypes.READ);
     return this._runImplicitTx(session, {
       statement,
       parameters,
@@ -114,7 +130,7 @@ class BoltClient {
   }
 
   async write({ statement = "", parameters = {}, existingTxId, metadata }) {
-    const session = await this.session(neo4j.session.WRITE);
+    const session = await this.session(this.link.sessionTypes.WRITE);
     return this._runImplicitTx(session, {
       statement,
       parameters,
@@ -153,10 +169,18 @@ class BoltClient {
         return r;
       })
       .catch(e => {
-        if (e.code === "Neo.ClientError.Security.Unauthorized") {
+        // We want to react on certain errors
+        // that should effect the state
+        const errorType = this.link.classifyError(e);
+        if (errorType === "UNAUTHORIZED") {
           this.service.send("UNAUTHORIZED");
         }
+        if (errorType === "UNAVAILABLE") {
+          this.service.send("UNAVAILABLE");
+        }
         closeFn();
+
+        // Bubble error to user land
         throw e;
       });
     return [id, runPromise];
@@ -168,7 +192,7 @@ class BoltClient {
         "Connection not established. Client is in state:",
         this.service.state.value
       );
-      if (retries) {
+      if (retries > 1) {
         await new Promise(resolve => setTimeout(() => resolve(), 1000));
         return this.ensureConnected(--retries);
       }
@@ -178,4 +202,4 @@ class BoltClient {
   }
 }
 
-module.exports = BoltClient;
+module.exports = Neo4jClient;
