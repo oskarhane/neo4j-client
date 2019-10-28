@@ -37,8 +37,8 @@ async function main(queries) {
 
 async function run(q) {
   try {
-    const [id, p] = await client.read(q);
-    const res = await p;
+    const { queryPromise } = await client.read(q);
+    const res = await queryPromise;
     console.log("res: ", res.records[0]._fields[0]);
   } catch (e) {
     console.log("e in test: ", e);
