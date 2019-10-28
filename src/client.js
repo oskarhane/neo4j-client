@@ -9,6 +9,10 @@ class Neo4jClient {
     this.init();
     this.connect();
     this.trackedSessions = {};
+    this.errorTypes = {
+      UNAUTHORIZED: "UNAUTHORIZED",
+      UNAVAILABLE: "UNAVAILABLE"
+    };
   }
   replaceLink(link) {
     if (!this.service.state.matches("failed")) {
@@ -47,8 +51,9 @@ class Neo4jClient {
             onError: {
               target: "failed",
               actions: assign({
-                errorMessage: (context, event) => {
-                  return event.data.code;
+                errorMessage: (_, event) => {
+                  const errorType = this.link.classifyError(event.data);
+                  return errorType ? errorType.toUpperCase() : errorType;
                 }
               })
             }
@@ -61,17 +66,16 @@ class Neo4jClient {
             UNAUTHORIZED: {
               target: "failed",
               actions: assign({
-                errorMessage: (context, event) => {
-                  return "Unauthorized";
+                errorMessage: () => {
+                  return this.errorTypes.UNAUTHORIZED;
                 }
               })
             },
             UNAVAILABLE: {
               target: "failed",
               actions: assign({
-                errorMessage: (context, event) => {
-                  console.log("ServiceUnavailable");
-                  return "ServiceUnavailable";
+                errorMessage: () => {
+                  return this.errorTypes.UNAVAILABLE;
                 }
               })
             }
@@ -132,6 +136,11 @@ class Neo4jClient {
   }
 
   async query(args, type = "read") {
+    try {
+      await this.ensureConnected();
+    } catch (e) {
+      throw e;
+    }
     const ensuredId = args.existingTxId || v4();
     const onClose = id => this.untrack(id);
     const { id, queryPromise, closeFn } = await this.link[type]({
@@ -162,20 +171,24 @@ class Neo4jClient {
 
   addErrorCheck(queryPromise, closeFn) {
     return queryPromise.catch(e => {
-      // We want to react on certain errors
-      // that should effect the state
-      const errorType = this.link.classifyError(e);
-      if (errorType === "UNAUTHORIZED") {
-        this.service.send("UNAUTHORIZED");
-      }
-      if (errorType === "UNAVAILABLE") {
-        this.service.send("UNAVAILABLE");
-      }
+      this.sendErrorEvents(e);
       closeFn();
 
       // Bubble error to user land
       throw e;
     });
+  }
+
+  sendErrorEvents(e) {
+    // We want to react on certain errors
+    // that should effect the state
+    const errorType = this.link.classifyError(e);
+    if (errorType === "UNAUTHORIZED") {
+      this.service.send("UNAUTHORIZED");
+    }
+    if (errorType === "UNAVAILABLE") {
+      this.service.send("UNAVAILABLE");
+    }
   }
 
   untrack(id) {
@@ -196,17 +209,18 @@ class Neo4jClient {
     return newCloseFn;
   }
 
-  async ensureConnected(retries = 3) {
+  async ensureConnected(retries = 5) {
     if (!this.service.state.matches("connected")) {
       console.log(
         "Connection not established. Client is in state:",
         this.service.state.value
       );
       if (retries > 1) {
+        this.connect();
         await new Promise(resolve => setTimeout(() => resolve(), 1000));
         return this.ensureConnected(--retries);
       }
-      return Promise.reject();
+      return Promise.reject(this.service.state.context.errorMessage);
     }
     return Promise.resolve();
   }
