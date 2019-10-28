@@ -9,6 +9,7 @@ The client is explicit states and events so user code can always check the curre
 ### Separation of client and connections
 
 Connections are invisible in the code. We work with `read` and `write` statements.
+This full chaining mechanism of Link's in ApolloClient is not implentented as this stage, but ideally will at some point.
 
 ### Usage
 
@@ -20,8 +21,8 @@ const client = new Neo4jClient({ link: boltLink });
 
 async function run(q) {
   try {
-    const [id, res] = await client.read({ statement: q });
-    return await res;
+    const { id, queryPromise } = await client.read({ statement: q });
+    return await queryPromise;
   } catch (e) {
     console.log("errored: ", e);
     throw e;
