@@ -1,3 +1,5 @@
+const { v4 } = require("uuid");
+
 module.exports.TestLink = function() {
   this.sessionTypes = {
     READ: "READ",
@@ -5,14 +7,21 @@ module.exports.TestLink = function() {
   };
   this.connect = jest.fn(() => Promise.resolve()); // Successful by default
   this.disconnect = jest.fn();
-  this.session = jest.fn(() => new TestSession());
+  this.session = jest.fn((...args) => new TestSession(...args));
   this.classifyError = jest.fn();
+  this.read = jest.fn((...args) => {
+    return { id: args.id || v4(), queryPromise: Promise.resolve() };
+  });
+  this.write = jest.fn((...args) => {
+    return { id: args.id || v4(), queryPromise: Promise.resolve() };
+  });
 };
 
-module.exports.TestSession = function() {
+function TestSession() {
   this.run = jest.fn(() => Promise.resolve());
   this.close = jest.fn(cb => cb && cb());
-};
+}
+module.exports.TestSession = TestSession;
 
 module.exports.sleep = secs => {
   return new Promise(resolve => setTimeout(() => resolve(), secs * 1000));

@@ -53,24 +53,20 @@ describe("neo4j-client", () => {
     });
   });
 
-  describe("sessions", () => {
-    test("session happy path", async () => {
+  describe("queries and errors", () => {
+    test("query happy path", async () => {
       // Given
       const query = {
         statement: "RETURN $x",
         parameters: { x: 1 },
-        metadata: { client: "test" }
+        metadata: { client: "test" },
+        existingTxId: 1
       };
-      let session;
-      const sessionMock = jest.fn(() => {
-        session = new TestSession();
-        return session;
-      });
+
       const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
         "connected"
       );
       const link = new TestLink();
-      link.session = sessionMock;
 
       // When
       const client = new Neo4jClient({ link, onStateChange });
@@ -81,32 +77,22 @@ describe("neo4j-client", () => {
       // Then
       expect(client.stateMatches("connected")).toBe(true);
       expect(link.connect).toHaveBeenCalledTimes(1);
-      expect(sessionMock).toHaveBeenCalledTimes(1);
-      expect(sessionMock).toHaveBeenCalledWith(link.sessionTypes.READ);
-      expect(session.run).toHaveBeenCalledTimes(1);
-      expect(session.close).toHaveBeenCalledTimes(1);
-      expect(session.run).toHaveBeenCalledWith(
-        query.statement,
-        query.parameters,
-        { metadata: query.metadata }
-      );
+      expect(link.read).toHaveBeenCalledTimes(1);
+      expect(link.read).toHaveBeenCalledWith(query);
     });
 
-    test("session unauthorized path = failed state", async () => {
+    test("unauthorized path = failed state", async () => {
       // Given
       const error = { code: "UNAUTHORIZED" };
       const classifyErrorMock = jest.fn(e => e.code);
-      let session;
-      const sessionMock = jest.fn(() => {
-        session = new TestSession();
-        session.run = jest.fn(() => Promise.reject(error));
-        return session;
+      const readMock = jest.fn(() => {
+        return { id: 1, queryPromise: Promise.reject(error) };
       });
       const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
         "connected"
       );
       const link = new TestLink();
-      link.session = sessionMock;
+      link.read = readMock;
       link.classifyError = classifyErrorMock;
 
       // When
@@ -114,8 +100,8 @@ describe("neo4j-client", () => {
       // Wait for client to connect
       await waitUntilStateMatches();
       try {
-        const [_, res] = await client.read({});
-        await res;
+        const { queryPromise } = await client.read({});
+        await queryPromise;
       } catch (e) {}
 
       // Then
@@ -124,21 +110,18 @@ describe("neo4j-client", () => {
       expect(classifyErrorMock).toHaveBeenCalledWith(error);
     });
 
-    test("session query error path = still connected", async () => {
+    test("query error path = still connected", async () => {
       // Given
       const error = { code: "Test.Error" }; // Query error
       const classifyErrorMock = jest.fn(e => e.code);
-      let session;
-      const sessionMock = jest.fn(() => {
-        session = new TestSession();
-        session.run = jest.fn(() => Promise.reject(error));
-        return session;
+      const readMock = jest.fn(() => {
+        return { id: 1, queryPromise: Promise.reject(error) };
       });
       const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
         "connected"
       );
       const link = new TestLink();
-      link.session = sessionMock;
+      link.read = readMock;
       link.classifyError = classifyErrorMock;
 
       // When
@@ -146,8 +129,8 @@ describe("neo4j-client", () => {
       // Wait for client to connect
       await waitUntilStateMatches();
       try {
-        const [_, res] = await client.read({});
-        await res;
+        const { queryPromise } = await client.read({});
+        await queryPromise;
       } catch (e) {}
 
       // Then
@@ -162,69 +145,67 @@ describe("neo4j-client", () => {
       // Given
       const query = { statement: "RETURN 1" };
       const cancelDone = jest.fn();
-      let session;
-      const sessionMock = jest.fn(() => {
-        session = new TestSession();
-        return session;
+      const closeFn = jest.fn(fn => fn());
+      const readMock = jest.fn(() => {
+        return { id: 10, queryPromise: Promise.resolve(), closeFn };
       });
       const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
         "connected"
       );
       const link = new TestLink();
-      link.session = sessionMock;
+      link.read = readMock;
 
       // When
       const client = new Neo4jClient({ link, onStateChange });
       // Wait for client to connect
       await waitUntilStateMatches();
-      const [id] = await client.read(query);
+      const { id, queryPromise } = await client.read(query);
+      await queryPromise;
 
       // Then
-      expect(session.run).toHaveBeenCalledTimes(1);
-      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(link.read).toHaveBeenCalledTimes(1);
+      expect(closeFn).toHaveBeenCalledTimes(0);
 
       // When
       // Time to cancel
       client.cancel(id, cancelDone);
 
       // Then
-      expect(session.run).toHaveBeenCalledTimes(1);
-      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(link.read).toHaveBeenCalledTimes(1);
+      expect(closeFn).toHaveBeenCalledTimes(0);
       expect(cancelDone).toHaveBeenCalledTimes(0); // <- not called
     });
     test("cancelling query", async () => {
       // Given
       const query = { statement: "RETURN 1" };
       const cancelDone = jest.fn();
-      let session;
-      const sessionMock = jest.fn(() => {
-        session = new TestSession();
-        session.run = jest.fn(() => new Promise(() => {})); // never ending promise
-        return session;
+      const closeFn = jest.fn(fn => fn());
+      const readMock = jest.fn(() => {
+        return { id: 1, queryPromise: new Promise(() => {}), closeFn }; // Never ending promise
       });
       const { onStateChange, waitUntilStateMatches } = observeStateChangeUntil(
         "connected"
       );
       const link = new TestLink();
-      link.session = sessionMock;
+      link.read = readMock;
 
       // When
       const client = new Neo4jClient({ link, onStateChange });
       // Wait for client to connect
       await waitUntilStateMatches();
-      const [id] = await client.read(query);
+      const { id } = await client.read(query);
 
       // Then
-      expect(session.run).toHaveBeenCalledTimes(1);
-      expect(session.close).toHaveBeenCalledTimes(0);
+      expect(link.read).toHaveBeenCalledTimes(1);
+      expect(closeFn).toHaveBeenCalledTimes(0);
 
       // When
       // Time to cancel
       client.cancel(id, cancelDone);
 
       // Then
-      expect(session.run).toHaveBeenCalledTimes(1);
-      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(link.read).toHaveBeenCalledTimes(1);
+      expect(closeFn).toHaveBeenCalledTimes(1);
       expect(cancelDone).toHaveBeenCalledTimes(1); // <- called
     });
   });

@@ -57,6 +57,45 @@ class BoltLink {
     const session = this.driver.session(...args);
     return new BoltSession(session);
   }
+  async read({ statement = "", parameters = {}, existingTxId, metadata }) {
+    const session = await this.session(this.sessionTypes.READ);
+    return this._runImplicitTx(session, {
+      statement,
+      parameters,
+      existingTxId,
+      metadata
+    });
+  }
+  async write({ statement = "", parameters = {}, existingTxId, metadata }) {
+    const session = await this.session(this.sessionTypes.WRITE);
+    return this._runImplicitTx(session, {
+      statement,
+      parameters,
+      existingTxId,
+      metadata
+    });
+  }
+
+  _runImplicitTx(
+    session,
+    { statement = "", parameters = {}, existingTxId, metadata }
+  ) {
+    const id = existingTxId || v4();
+    const sessionMetadata = metadata ? { metadata: metadata } : undefined;
+
+    const closeFn = (cb = () => {}) => {
+      session.close(cb);
+    };
+
+    const queryPromise = session
+      .run(statement, parameters, sessionMetadata)
+      .then(r => {
+        closeFn();
+        return r;
+      });
+    return { id, queryPromise, closeFn };
+  }
+
   classifyError(e) {
     if (e.code === "Neo.ClientError.Security.Unauthorized") {
       return "UNAUTHORIZED";

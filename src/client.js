@@ -107,33 +107,34 @@ class Neo4jClient {
     return this.service.send("DISCONNECT");
   }
 
-  async session(...args) {
-    try {
-      await this.ensureConnected(2);
-    } catch (e) {
-      throw new Error("Could not establish session. Are you connected?");
-    }
-    return this.link.session(...args);
+  async read(args) {
+    return this.query(args, "read");
   }
 
-  async read({ statement = "", parameters = {}, existingTxId, metadata }) {
-    const session = await this.session(this.link.sessionTypes.READ);
-    return this._runImplicitTx(session, {
-      statement,
-      parameters,
-      existingTxId,
-      metadata
-    });
+  async write(args) {
+    return this.query(args, "write");
   }
 
-  async write({ statement = "", parameters = {}, existingTxId, metadata }) {
-    const session = await this.session(this.link.sessionTypes.WRITE);
-    return this._runImplicitTx(session, {
-      statement,
-      parameters,
-      existingTxId,
-      metadata
+  async query(args, type = "read") {
+    const ensuredId = args.existingTxId || v4();
+    const onClose = id => this.untrack(id);
+    const { id, queryPromise, closeFn } = await this.link[type]({
+      ...args,
+      existingTxId: ensuredId
     });
+    const closeFnMod = this.track(id, closeFn);
+    const queryPromiseMod = this.addErrorCheck(
+      queryPromise.then(res => {
+        onClose(id);
+        return res;
+      }),
+      closeFn
+    );
+    return {
+      id,
+      queryPromise: queryPromiseMod,
+      closeFn: closeFnMod
+    };
   }
 
   cancel(id, cb) {
@@ -143,44 +144,40 @@ class Neo4jClient {
     this.trackedSessions[id](cb);
   }
 
-  _runImplicitTx(
-    session,
-    { statement = "", parameters = {}, existingTxId, metadata }
-  ) {
-    const id = existingTxId || v4();
-    const sessionMetadata = metadata ? { metadata: metadata } : undefined;
+  addErrorCheck(queryPromise, closeFn) {
+    return queryPromise.catch(e => {
+      // We want to react on certain errors
+      // that should effect the state
+      const errorType = this.link.classifyError(e);
+      if (errorType === "UNAUTHORIZED") {
+        this.service.send("UNAUTHORIZED");
+      }
+      if (errorType === "UNAVAILABLE") {
+        this.service.send("UNAVAILABLE");
+      }
+      closeFn();
 
-    const closeFn = (cb = () => {}) => {
-      session.close(cb);
-      if (this.trackedSessions[id]) {
-        delete this.trackedSessions[id];
+      // Bubble error to user land
+      throw e;
+    });
+  }
+
+  untrack(id) {
+    if (this.trackedSessions[id]) {
+      delete this.trackedSessions[id];
+      return true;
+    }
+    return null;
+  }
+
+  track(id, closeFn) {
+    const newCloseFn = (cb = () => {}) => {
+      if (this.untrack(id)) {
+        closeFn(cb);
       }
     };
-
-    this.trackedSessions[id] = closeFn;
-
-    const runPromise = session
-      .run(statement, parameters, sessionMetadata)
-      .then(r => {
-        closeFn();
-        return r;
-      })
-      .catch(e => {
-        // We want to react on certain errors
-        // that should effect the state
-        const errorType = this.link.classifyError(e);
-        if (errorType === "UNAUTHORIZED") {
-          this.service.send("UNAUTHORIZED");
-        }
-        if (errorType === "UNAVAILABLE") {
-          this.service.send("UNAVAILABLE");
-        }
-        closeFn();
-
-        // Bubble error to user land
-        throw e;
-      });
-    return [id, runPromise];
+    this.trackedSessions[id] = newCloseFn;
+    return newCloseFn;
   }
 
   async ensureConnected(retries = 3) {
