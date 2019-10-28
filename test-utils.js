@@ -7,7 +7,7 @@ module.exports.TestLink = function() {
   };
   this.connect = jest.fn(() => Promise.resolve()); // Successful by default
   this.disconnect = jest.fn();
-  this.session = jest.fn((...args) => new TestSession(...args));
+  this.session = jest.fn((...args) => ({ run: jest.fn(), close: jest.fn() }));
   this.classifyError = jest.fn();
   this.read = jest.fn((...args) => {
     return { id: args.id || v4(), queryPromise: Promise.resolve() };
@@ -16,12 +16,6 @@ module.exports.TestLink = function() {
     return { id: args.id || v4(), queryPromise: Promise.resolve() };
   });
 };
-
-function TestSession() {
-  this.run = jest.fn(() => Promise.resolve());
-  this.close = jest.fn(cb => cb && cb());
-}
-module.exports.TestSession = TestSession;
 
 module.exports.sleep = secs => {
   return new Promise(resolve => setTimeout(() => resolve(), secs * 1000));

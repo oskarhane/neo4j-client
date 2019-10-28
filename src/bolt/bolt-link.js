@@ -1,5 +1,4 @@
 const { v1: neo4j } = require("neo4j-driver");
-const BoltSession = require("./bolt-session");
 
 class BoltLink {
   constructor(url, auth, opts) {
@@ -55,7 +54,7 @@ class BoltLink {
   }
   session(...args) {
     const session = this.driver.session(...args);
-    return new BoltSession(session);
+    return session;
   }
   async read({ statement = "", parameters = {}, existingTxId, metadata }) {
     const session = await this.session(this.sessionTypes.READ);

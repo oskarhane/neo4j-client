@@ -1,10 +1,5 @@
 const Neo4jClient = require("./client");
-const {
-  observeStateChangeUntil,
-  TestLink,
-  TestSession,
-  sleep
-} = require("../test-utils");
+const { observeStateChangeUntil, TestLink } = require("../test-utils");
 
 describe("neo4j-client", () => {
   describe("connections", () => {
