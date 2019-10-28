@@ -10,6 +10,14 @@ class Neo4jClient {
     this.connect();
     this.trackedSessions = {};
   }
+  replaceLink(link) {
+    if (!this.service.state.matches("failed")) {
+      this.link.disconnect();
+      this.service.send("RESET");
+    }
+    this.link = link;
+    this.connect();
+  }
   init() {
     const machineSpec = {
       id: "neo4j-client",
@@ -24,6 +32,9 @@ class Neo4jClient {
           }
         },
         connecting: {
+          on: {
+            RESET: "disconnected"
+          },
           entry: "resetErrorMessage",
           invoke: {
             id: "connect",
@@ -45,6 +56,7 @@ class Neo4jClient {
         },
         connected: {
           on: {
+            RESET: "disconnected",
             DISCONNECT: "disconnecting",
             UNAUTHORIZED: {
               target: "failed",
@@ -66,6 +78,9 @@ class Neo4jClient {
           }
         },
         disconnecting: {
+          on: {
+            RESET: "disconnected"
+          },
           invoke: {
             id: "disconnect",
             src: (context, event) => {
@@ -79,7 +94,8 @@ class Neo4jClient {
         },
         failed: {
           on: {
-            CONNECT: "connecting"
+            CONNECT: "connecting",
+            RESET: "disconnected"
           }
         }
       }

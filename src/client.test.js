@@ -209,4 +209,29 @@ describe("neo4j-client", () => {
       expect(cancelDone).toHaveBeenCalledTimes(1); // <- called
     });
   });
+  describe("replacing link", () => {
+    test("can replace link to make the client reconnect", () => {
+      // Given
+      const link1 = new TestLink();
+      const link2 = new TestLink();
+
+      // When
+      const client = new Neo4jClient({ link: link1 });
+
+      // Then
+      expect(link1.connect).toHaveBeenCalledTimes(1);
+      expect(link1.disconnect).toHaveBeenCalledTimes(0);
+      expect(link2.connect).toHaveBeenCalledTimes(0);
+      expect(link2.disconnect).toHaveBeenCalledTimes(0);
+
+      // When
+      client.replaceLink(link2);
+
+      // Then
+      expect(link1.connect).toHaveBeenCalledTimes(1);
+      expect(link1.disconnect).toHaveBeenCalledTimes(1);
+      expect(link2.connect).toHaveBeenCalledTimes(1);
+      expect(link2.disconnect).toHaveBeenCalledTimes(0);
+    });
+  });
 });
